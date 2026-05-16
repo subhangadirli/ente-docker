@@ -1,0 +1,11 @@
+# Generated runtime data
+.ente.state
+.env
+
+# Local installer output
+data/
+*.log
+
+# Editor and OS
+.vscode/
+.DS_Store

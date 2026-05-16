@@ -1,0 +1,110 @@
+name: ente-selfhost
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ente-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ${DATA_DIR}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: ente-minio
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_CONSOLE_ENABLE: ${MINIO_CONSOLE_ENABLE}
+    command: >-
+      /bin/sh -c "
+      if [ \"${MINIO_CONSOLE_ENABLE}\" = \"yes\" ]; then
+        exec minio server /data --console-address :9001;
+      else
+        exec minio server /data;
+      fi"
+    volumes:
+      - ${DATA_DIR}/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: ente-minio-init
+    restart: "no"
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+    entrypoint: >-
+      /bin/sh -c "
+      until mc alias set ente http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}; do sleep 2; done;
+      mc mb --ignore-existing ente/${MINIO_BUCKET};
+      mc anonymous set none ente/${MINIO_BUCKET};"
+    networks:
+      - backend
+
+  ente:
+    image: ghcr.io/ente-io/server:latest
+    container_name: ente-server
+    restart: always
+    depends_on:
+      - postgres
+      - minio
+      - minio-init
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET: ${MINIO_BUCKET}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_USE_SSL: "false"
+      ENTE_APP_SECRET: ${ENTE_APP_SECRET}
+      ENTE_JWT_SECRET: ${ENTE_JWT_SECRET}
+      APP_SECRET: ${ENTE_APP_SECRET}
+      JWT_SECRET: ${ENTE_JWT_SECRET}
+      ENTE_PUBLIC_URL: ${ENTE_PUBLIC_URL}
+      ENTE_LOG_LEVEL: ${ENTE_LOG_LEVEL}
+    ports:
+      - ${ENTE_BIND_ADDRESS}:${ENTE_PORT}:8080
+    networks:
+      - backend
+      - edge
+
+networks:
+  backend:
+    internal: true
+  edge:

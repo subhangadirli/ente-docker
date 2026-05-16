@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE_FILE="${SCRIPT_DIR}/.ente.state"
+
+ENGINE=""
+DATA_DIR="${HOME}/.ente-docker"
+COMPOSE_FILE=""
+COMPOSE_OVERRIDE_FILE=""
+ENV_FILE=""
+
+declare -a COMPOSE_CMD
+declare -a COMPOSE_FILES
+
+usage() {
+  cat <<'EOF'
+Usage: ./ente <command>
+
+Commands:
+  start        Start Ente stack
+  stop         Stop Ente stack
+  restart      Restart Ente stack
+  logs         Follow logs (add extra args after --)
+  status       Show container status
+  reset        Destroy all local Ente data (requires --yes)
+  config       Print resolved runtime and paths
+  help         Show this help
+EOF
+}
+
+trim_lower() {
+  local value="$1"
+  echo "${value,,}"
+}
+
+detect_engine() {
+  if command -v podman >/dev/null 2>&1; then
+    if podman compose version >/dev/null 2>&1 || command -v podman-compose >/dev/null 2>&1; then
+      ENGINE="podman"
+      return
+    fi
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
+      ENGINE="docker"
+      return
+    fi
+  fi
+
+  echo "No supported runtime found. Run ./install.sh first." >&2
+  exit 1
+}
+
+set_compose_cmd() {
+  case "${ENGINE}" in
+    podman)
+      if podman compose version >/dev/null 2>&1; then
+        COMPOSE_CMD=(podman compose)
+      elif command -v podman-compose >/dev/null 2>&1; then
+        COMPOSE_CMD=(podman-compose)
+      else
+        echo "podman compose support not found." >&2
+        exit 1
+      fi
+      ;;
+    docker)
+      if docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD=(docker compose)
+      elif command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_CMD=(docker-compose)
+      else
+        echo "docker compose support not found." >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "Runtime engine is not set." >&2
+      exit 1
+      ;;
+  esac
+}
+
+load_state() {
+  if [[ -f "${STATE_FILE}" ]]; then
+    # shellcheck disable=SC1090
+    source "${STATE_FILE}"
+  fi
+
+  if [[ -z "${ENGINE}" ]]; then
+    detect_engine
+  fi
+
+  if [[ -z "${DATA_DIR}" ]]; then
+    DATA_DIR="${HOME}/.ente-docker"
+  fi
+
+  COMPOSE_FILE="${DATA_DIR}/docker-compose.yml"
+  COMPOSE_OVERRIDE_FILE="${DATA_DIR}/docker-compose.override.yml"
+  ENV_FILE="${DATA_DIR}/.env"
+
+  if [[ ! -f "${COMPOSE_FILE}" || ! -f "${ENV_FILE}" ]]; then
+    echo "Missing install artifacts in ${DATA_DIR}. Run ./install.sh first." >&2
+    exit 1
+  fi
+
+  COMPOSE_FILES=(-f "${COMPOSE_FILE}")
+  if [[ -f "${COMPOSE_OVERRIDE_FILE}" ]]; then
+    COMPOSE_FILES+=(-f "${COMPOSE_OVERRIDE_FILE}")
+  fi
+
+  set_compose_cmd
+}
+
+compose() {
+  "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "$@"
+}
+
+command_start() {
+  compose up -d
+}
+
+command_stop() {
+  compose down
+}
+
+command_restart() {
+  compose down
+  compose up -d
+}
+
+command_logs() {
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+  fi
+  compose logs -f "$@"
+}
+
+command_status() {
+  compose ps
+}
+
+command_config() {
+  cat <<EOF
+ENGINE=${ENGINE}
+DATA_DIR=${DATA_DIR}
+ENV_FILE=${ENV_FILE}
+COMPOSE_FILE=${COMPOSE_FILE}
+OVERRIDE_FILE=${COMPOSE_OVERRIDE_FILE}
+EOF
+}
+
+command_reset() {
+  if [[ "${1:-}" != "--yes" ]]; then
+    echo "Refusing destructive reset without --yes" >&2
+    echo "Usage: ./ente reset --yes" >&2
+    exit 1
+  fi
+
+  compose down -v --remove-orphans || true
+  rm -rf "${DATA_DIR}/postgres" "${DATA_DIR}/minio"
+  mkdir -p "${DATA_DIR}/postgres" "${DATA_DIR}/minio"
+  echo "Local Ente data reset complete."
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$(trim_lower "${cmd}")" in
+    help|-h|--help)
+      usage
+      ;;
+    start|stop|restart|logs|status|config|reset)
+      load_state
+      "command_${cmd}" "$@"
+      ;;
+    *)
+      echo "Unknown command: ${cmd}" >&2
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
