@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_FILE="${SCRIPT_DIR}/.ente.state"
+STATE_FILE=""
 
 ENGINE=""
 DATA_DIR="${HOME}/.ente-docker"
@@ -83,17 +83,22 @@ set_compose_cmd() {
 }
 
 load_state() {
+  # Backwards-compatible: source repo state if present
+  if [[ -f "${SCRIPT_DIR}/.ente.state" ]]; then
+    # shellcheck disable=SC1090
+    source "${SCRIPT_DIR}/.ente.state"
+  fi
+
+  # Ensure DATA_DIR is set (may have been loaded from state)
+  if [[ -z "${DATA_DIR}" ]]; then
+    DATA_DIR="${HOME}/.ente-docker"
+  fi
+
+  # Prefer state stored in DATA_DIR
+  STATE_FILE="${DATA_DIR}/.ente.state"
   if [[ -f "${STATE_FILE}" ]]; then
     # shellcheck disable=SC1090
     source "${STATE_FILE}"
-  fi
-
-  if [[ -z "${ENGINE}" ]]; then
-    detect_engine
-  fi
-
-  if [[ -z "${DATA_DIR}" ]]; then
-    DATA_DIR="${HOME}/.ente-docker"
   fi
 
   COMPOSE_FILE="${DATA_DIR}/docker-compose.yml"
@@ -111,10 +116,24 @@ load_state() {
   fi
 
   set_compose_cmd
+  # Detect if compose supports --env-file
+  if "${COMPOSE_CMD[@]}" --help 2>&1 | grep -q -- '--env-file'; then
+    COMPOSE_SUPPORTS_ENVFILE=1
+  else
+    COMPOSE_SUPPORTS_ENVFILE=0
+  fi
 }
 
 compose() {
-  "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "$@"
+  if [[ "${COMPOSE_SUPPORTS_ENVFILE:-1}" -eq 1 ]]; then
+    "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" "$@"
+  else
+    set -a
+    # shellcheck disable=SC1090
+    source "${ENV_FILE}"
+    set +a
+    "${COMPOSE_CMD[@]}" "${COMPOSE_FILES[@]}" "$@"
+  fi
 }
 
 command_start() {

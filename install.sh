@@ -310,7 +310,8 @@ write_compose_files() {
   cp "${SCRIPT_DIR}/docker-compose.yml" "${COMPOSE_FILE}"
 
   if is_yes "${MINIO_CONSOLE_ENABLE}"; then
-    cat >"${COMPOSE_OVERRIDE_FILE}" <<'EOF'
+    # Use expandable heredoc so ${MINIO_CONSOLE_PORT} is interpolated
+    cat >"${COMPOSE_OVERRIDE_FILE}" <<EOF
 services:
   minio:
     ports:
@@ -337,7 +338,7 @@ build_compose_files() {
 }
 
 write_state_file() {
-  cat >"${STATE_FILE}" <<EOF
+  cat >"${DATA_DIR}/.ente.state" <<EOF
 ENGINE=${ENGINE}
 DATA_DIR=${DATA_DIR}
 EOF
@@ -345,7 +346,34 @@ EOF
 
 start_stack() {
   build_compose_files
-  "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" up -d
+  # Use --env-file when supported; otherwise source env into the environment
+  if "${COMPOSE_CMD[@]}" --help 2>&1 | grep -q -- '--env-file'; then
+    "${COMPOSE_CMD[@]}" --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" up -d
+  else
+    set -a
+    # shellcheck disable=SC1090
+    source "${ENV_FILE}"
+    set +a
+    "${COMPOSE_CMD[@]}" "${COMPOSE_FILES[@]}" up -d
+  fi
+}
+
+smoke_test() {
+  local api_url="${ENTE_PUBLIC_URL:-http://localhost:8080}"
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "curl not available; skipping smoke test for ${api_url}"
+    return
+  fi
+
+  info "Waiting for Ente API to become available at ${api_url}"
+  for i in {1..30}; do
+    if curl -fsS --max-time 3 "${api_url}" >/dev/null 2>&1; then
+      info "Ente API is reachable"
+      return
+    fi
+    sleep 2
+  done
+  warn "Ente API did not respond within timeout. Check logs with '${COMPOSE_CMD[*]} --env-file ${ENV_FILE} ${COMPOSE_FILES[*]} logs'"
 }
 
 print_summary() {
@@ -410,6 +438,7 @@ main() {
   write_compose_files
   write_state_file
   start_stack
+  smoke_test
   print_summary
 }
 

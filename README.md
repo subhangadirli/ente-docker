@@ -134,6 +134,18 @@ Yes. Data is stored on your machine under `~/.ente-docker` unless you choose a d
   ./ente reset --yes
   ```
 
+## Smoke test
+
+After `./install.sh` the installer attempts a basic smoke test against the API (localhost:8080) if `curl` is available. If the smoke test fails, check service logs with:
+
+```bash
+./ente logs
+```
+
+## Where state is stored
+
+Installer state and generated runtime artifacts are persisted under the data directory (default `~/.ente-docker`). The state file is `.ente.state` in that directory.
+
 ## Security Notes
 
 - Secrets are generated locally by the installer.
