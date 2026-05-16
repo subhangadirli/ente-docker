@@ -16,7 +16,7 @@ It uses the official server image and does not modify Ente itself.
 ## Quick Start
 
 ```bash
-git clone https://codeberg.org/<user>/ente-docker
+git clone https://github.com/subhangadirli/ente-docker.git
 cd ente-docker
 ./install.sh
 ```
