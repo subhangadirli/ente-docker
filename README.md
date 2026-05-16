@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/ente-installer.png" alt="Ente Docker Installer Logo" width="180" />
+  <img src="docs/ente-installer.svg" alt="Ente Docker Installer Logo" width="180" />
 </p>
 
 # Ente Docker Self-Host Installer
